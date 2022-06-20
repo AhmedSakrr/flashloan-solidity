@@ -1,0 +1,171 @@
+https://mcl-docs.multiplier.finance/developers/api-reference/flash-loans
+
+
+Example
+An example of your contract calling LendingPool:
+
+/**
+* Flash Loan of 1000 DAI
+*/
+address receiver = address(this) // Can also be a separate contract
+address asset = "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3"; // Dai
+uint256 amount = 1000 * 1e18;
+
+// If no params are needed, use an empty params:
+bytes memory params = "";
+// Else encode the params like below (bytes encoded param of type `address` and `uint`)
+// bytes memory params = abi.encode(address(this), 1234);
+
+ILendingPool lendingPool = ILendingPool(addressesProvider.getLendingPool());
+lendingPool.flashLoan(address(this), asset, amount, params);
+
+
+In case you need to pass some other data for executeOperation(), use the params parameter to do so. You just need to pass the bytes encoded data here, otherwise pass empty bytes encoded value.
+This is how it works. Your contract call lendingPool.flashLoan() and then LendingPool contract perform some checks (require statements), transfer the _amount of the _reserve asset you requested to the receiver passed in the parameters and finally calls the executeOperation() on the receiver contract you specified.
+Most important, your receiver contract should have a method with same signature as following:
+
+function executeOperation(address _reserve, uint256 _amount, uint256 _fee, bytes memory _params) external
+
+
+Before the end of the executeOperation() method you have written in your contract, you should payback the Flash loan amount plus fee. If the payment is not done, the whole transaction will be reverted.
+As shown in the example below, we have inherited the FlashLoanReceiverBase contract so we can make the repay using the transferFundsBackToPoolInternal(). It will repay the loan amount and fee.
+An example of a receiver contract using Flash Loan:
+
+pragma solidity ^0.5.0;
+
+import "@openzeppelin/contracts/math/SafeMath.sol";
+
+import "../tokens/MintableERC20.sol";
+import "../../flashloan/base/FlashLoanReceiverBase.sol";
+import "../../configuration/LendingPoolAddressesProvider.sol";
+import "../../configuration/NetworkMetadataProvider.sol";
+
+contract FlashLoanReceiverExample is FlashLoanReceiverBase {
+    using SafeMath for uint256;
+
+    constructor(LendingPoolAddressesProvider _provider)
+        FlashLoanReceiverBase(_provider)
+        public {}
+
+    function executeOperation(
+        address _reserve,
+        uint256 _amount,
+        uint256 _fee,
+        bytes memory _params) external {
+
+        //check the contract has the specified balance
+        require(_amount <= getBalanceInternal(address(this), _reserve), 
+            "Invalid balance for the contract");
+
+        /**
+            CUSTOM ACTION TO PERFORM WITH THE BORROWED LIQUIDITY
+            
+            Example of decoding bytes param of type `address` and `uint`
+            (address sampleAddress, uint sampleAmount) = abi.decode(_params, (address, uint));
+        */
+
+        transferFundsBackToPoolInternal(_reserve, _amount.add(_fee));
+    }
+}
+
+
+To start, you will create a new contract that you will call from remix.
+Let us create a new file named MyFlashloanContract.sol in remix and add the following code:
+
+pragma solidity ^0.5.0;
+
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/base/FlashLoanReceiverBase.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPool.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPoolAddressesProvider.sol";
+
+// The following is the mainnet address for the LendingPoolAddressProvider. contract MyFlashloanContract is FlashLoanReceiverBase(address(0xCc0479a98cC66E85806D0Cd7970d6e07f77Fd633)) {
+
+    // Rest of your code will go here
+}
+
+
+Remix is able to import solidity source files directly from Github. In the first 3 lines, we are importing the files necessary to interface with the MCL Protocol. You can look at these files individually by visiting them directly in Github.
+On line 8, we are passing in a constructor argument to the inherited FlashLoanReceiverBase contract, which determines which LendingPoolAddressProvider to use on the network the contract is deployed. 
+
+We've passed in the mainnet LendingPoolAddressProvider
+
+
+Next you'll want to add the function that you'll be calling to start the Flash Loan process. We'll call the function flashloan() and make sure that only the owner (i.e. you) can call this function. We will request to Flash Loan an amount of 1 Dai.
+In the below code, 1 ether refers to 1000000000000000000 wei worth of Dai, not 1 ethereum token. I.e. it represents 1e18 in solidity.
+
+
+pragma solidity ^0.5.0;
+
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/base/FlashLoanReceiverBase.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPool.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPoolAddressesProvider.sol";
+
+// The following is the mainnet address for the LendingPoolAddressProvider. contract MyFlashloanContract is FlashLoanReceiverBase(address(0xCc0479a98cC66E85806D0Cd7970d6e07f77Fd633)) {
+
+    function flashloan() public onlyOwner {
+        bytes memory data = "";
+        uint amount = 1 ether;
+        address asset = address(0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3); // mainnet DAI
+
+        ILendingPool lendingPool = ILendingPool(addressesProvider.getLendingPool());
+        lendingPool.flashLoan(address(this), asset, amount, data);
+    }
+}
+
+
+Now if we have requested a valid amount from a valid reserve, then the LendingPool contract will call the executeOperation() function in our contract.
+The executeOperation() function signature must match exactly:
+
+function executeOperation(address _reserve, uint256 _amount, uint256 _fee, bytes memory _params) external
+
+We can add our executeOperation() function as below:
+
+pragma solidity ^0.5.0;
+
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/base/FlashLoanReceiverBase.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPool.sol";
+import "https://raw.githubusercontent.com/Multiplier-Finance/MCL-FlashloanDemo/main/contracts/interfaces/ILendingPoolAddressesProvider.sol";
+
+// The following is the mainnet address for the LendingPoolAddressProvider. contract MyFlashloanContract is FlashLoanReceiverBase(address(0xCc0479a98cC66E85806D0Cd7970d6e07f77Fd633)) {
+
+    function executeOperation(
+        address _reserve,
+        uint256 _amount,
+        uint256 _fee,
+        bytes calldata _params
+    )
+        external
+    {
+        require(_amount <= getBalanceInternal(address(this), _reserve), "Invalid balance, was the flashLoan successful?");
+
+        //
+        // do your thing here
+        //
+
+        // Time to transfer the funds back
+        uint totalDebt = _amount.add(_fee);
+        transferFundsBackToPoolInternal(_reserve, totalDebt);
+    }
+
+    function flashloan() public onlyOwner {
+        bytes memory data = "";
+        uint amount = 1 ether;
+        address asset = address(0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3); // mainnet DAI,
+        ILendingPool lendingPool = ILendingPool(addressesProvider.getLendingPool());
+        lendingPool.flashLoan(address(this), asset, amount, data);
+    }
+}
+
+
+Note that when the LendingPool contract calls your executeOperation() function, it will pass in the reserve, amount, fee, and params for you to use in your operation.
+Before the end of the execution, you must pay back the borrowed funds. Failure to do so will cause the transaction to revert.
+Compiling and deploying your contract
+On the navigation bar on the right, select the 'Compile' option, and compile your contract. Once the contract has finished compiling, you may receive some warnings in yellow boxes at the bottom. You can safely ignore these warnings for now. However if you receive errors in red boxes, then those must be resolved before continuing.
+Next go to the 'Deploy' navigation option, and choose the environment you wish to deploy in.
+If you choose to deploy in the JavaScript VM, then your contract will not work correctly. This is because the JavaScript VM is a local blockchain instance running in your browser, and you have not set up all the necessary MCL Protocol contracts (such as the LendingPool). However this can be useful if you only need to call specific functions in your contract, without testing the Flash Loan part of your contract.
+The better option for deployment would be either 'Injected Web3' (i.e. Metamask in your browser) or 'Web3 Provider' (i.e. an infura endpoint). In either case, you will be able to choose a test network to deploy to, which should be one of the networks listed on the Deployed Contracts page.
+When deploying your contracts to mainnet or a testnet, ensure that the account being used for deployment has sufficient BNB to cover the costs of the deployment transaction, as well as enough left over to call the functions in your contract. For more information on deployment options in Remix, see their documentation.
+Call your contract
+If you execute your contract at this stage, the transaction will fail. This is because your MyFlashloanContract.sol contract does not have enough Dai to pay back the Flash Loan (as the executeOperation() function does not produce any extra funds to payback the loan). To solve this, ensure your contract has some Dai to pay back the Flash Loan.Next, call your flashloan() function with a sufficient gas limit (>210k). If successful, your contract will receive and payback the Flash Loan successfully. An example transaction using the above code is on BSC Testnet here.
+
+https://testnet.bscscan.com/tx/0x961a9edf3616120b8a17f4cc659a80c1fcf9e42f90ce088d53aee02c232a64e5
